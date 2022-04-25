@@ -1,5 +1,6 @@
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
+use ieee.numeric_std.all;
 
 --The IEEE.std_logic_unsigned contains definitions that allow 
 --std_logic_vector types to be used with the + operator to instantiate a 
@@ -157,70 +158,89 @@ signal printout_data : CHAR_ARRAY (0 TO (HUM_RES+TEM_RES+3)) := (OTHERS=>X"00");
 
 -- type CHAR_ARRAY is array (integer range<>) of std_logic_vector(7 downto 0);
 function slv_to_charary ( src : std_logic_vector) return CHAR_ARRAY is
-constant slv : std_logic_vector := src;
-variable strdata : CHAR_ARRAY (1 to slv'length) := (others => x"20");
-variable stridx : natural := 1; 
-begin
-    for i in slv'range loop
---        strdata(stridx) := std_logic'image(slv((i)))(2);
-        if slv(i) = '1' then
-            strdata(stridx) := x"31";
-        else 
-            strdata(stridx) := x"30";
-        end if;
-        stridx := stridx+1;
-    end loop;
-return strdata;
+	constant slv : std_logic_vector := src;
+	variable strdata : CHAR_ARRAY (1 to slv'length) := (others => x"20");
+	variable stridx : natural := 1; 
+		begin
+			for i in slv'range loop
+		--        strdata(stridx) := std_logic'image(slv((i)))(2);
+				if slv(i) = '1' then
+					strdata(stridx) := x"31";
+				else 
+					strdata(stridx) := x"30";
+				end if;
+				stridx := stridx+1;
+			end loop;
+		return strdata;
 end function;
 
 function add_CRLF( src : CHAR_ARRAY ) return CHAR_ARRAY is
-constant srcdata : CHAR_ARRAY := src;
-constant srclen : integer := srcdata'length;
-variable dstdata : CHAR_ARRAY (1 to srclen+2) := (others => x"00");
-begin 
-    dstdata(1 to srclen) := srcdata;
-    dstdata((srclen+1) to (srclen+2)) := (x"0d", x"0a"); -- "0d" is \r, "0a" is \n
-    return dstdata;
+	constant srcdata : CHAR_ARRAY := src;
+	constant srclen : integer := srcdata'length;
+	variable dstdata : CHAR_ARRAY (1 to srclen+2) := (others => x"00");
+		begin 
+			dstdata(1 to srclen) := srcdata;
+			dstdata((srclen+1) to (srclen+2)) := (x"0d", x"0a"); -- "0d" is \r, "0a" is \n
+		return dstdata;
 end function;
 
-function printout_raw (temsrc : std_logic_vector; humsrc : std_logic_vector)
-return CHAR_ARRAY is
+function get_raw (temsrc : std_logic_vector; humsrc : std_logic_vector)
+	return CHAR_ARRAY is
     constant temdata : std_logic_vector := temsrc;
     constant humdata : std_logic_vector := humsrc;
     constant outlen : integer := HUM_RES+TEM_RES+4;
     variable charout : CHAR_ARRAY(1 to outlen);
-    begin
-        charout(1 to (TEM_RES+2)) := add_CRLF(slv_to_charary(temdata)); -- TEM
-        charout((TEM_RES+3) to outlen) := add_CRLF(slv_to_charary(humdata)); -- HUM
-    return charout;
+		begin
+			charout(1 to (TEM_RES+2)) := add_CRLF(slv_to_charary(temdata)); -- TEM
+			charout((TEM_RES+3) to outlen) := add_CRLF(slv_to_charary(humdata)); -- HUM
+		return charout;
 end function;
---function readhum (src: std_logic_vector) return CHAR_ARRAY is
---    constant srcdata : std_logic_vector := src;
---    variable humdata : real := 0.0;
---    variable idx : integer := 0;
---    variable stri: integer := 0;
---    -- 4 digit precision RH display, with . and %
---    variable humstr : string (1 to 5) := "";
---    variable humout : CHAR_ARRAY (1 to 6) := (others=> x"00");
---    begin
---        while idx < HUM_RES loop
---            humdata := humdata + srcdata(HUM_RES-1-idx)*2**(-idx-1);
---            idx := idx+1;
---        end loop;
---        humstr := real'image(humdata);
---        idx := 1;
---        while idx < 4 loop
---            if idx = 3 THEN
---                humout(3) := (x"2e"); -- '.'
---                stri := stri + 1;
-----            humout(stri+idx) := (x "character'val(humstr(idx))");
---            humout(stri+idx) := humstr(idx);
---            idx := idx + 1;
---            end if;
---        end loop;
---        humout(6) := (x"25"); -- '%'
---    return humout;
---end function;
+function readhum (src: std_logic_vector) return CHAR_ARRAY is
+	constant srchum : std_logic_vector := src;
+	constant hundred : std_logic_vector(7 downto 0) := "01100100"; -- 100 in decimal
+	variable humdata : real := 0.0;
+	variable idx : integer := 0;
+	variable stri: integer := 0;
+	-- 4 digit precision RH display, with . and %
+	variable humstr : string (1 to 5) := "";
+	variable humout : CHAR_ARRAY (1 to 6) := (others=> x"00");
+	begin
+	-- 	while idx < HUM_RES loop
+	-- 		humdata := humdata + srcdata(HUM_RES-1-idx)*2**(-idx-1);
+	-- 		idx := idx+1;
+	-- 	end loop;
+	-- 	humstr := real'image(humdata);
+	-- 	idx := 1;
+	-- 	while idx < 4 loop
+	-- 		if idx = 3 THEN
+	-- 			humout(3) := (x"2e"); -- '.'
+	-- 			stri := stri + 1;
+	-- --           humout(stri+idx) := (x "character'val(humstr(idx))");
+	-- 		humout(stri+idx) := humstr(idx);
+	-- 		idx := idx + 1;
+	-- 		end if;
+	-- 	end loop;
+	-- 	humout(6) := (x"25"); -- '%'
+	-- return humout;
+end function;
+
+function readtem (src: std_logic_vector) return CHAR_ARRAY is
+  constant srctem : std_logic_vector := src;
+	constant factor : std_logic_vector(7 downto 0) := "10100101"; -- 165 in decimal
+	constant subtrahend : std_logic_vector(7 downto 0) := "00101000"; -- 40 in decimal
+	variable tembin : std_logic_vector(31 downto 0);
+	variable charout : CHAR_ARRAY(1 to 2);
+
+  constant srcfixed : ufixed(0 downto -15) := to_ufixed(src, srcfixed);
+  constant factorint : ufixed(7 downto 0) := to_ufixed(165, factorint);
+  constant subint : ufixed(8 downto -15) := to_ufixed(40, subint);
+  variable temfixed : ufixed(8 downto -15);
+		begin
+      temfixed := srcfixed*factorint-subint;
+      tembin := std_logic_vector(to_unsigned(temfixed, temfixed'length));
+
+		return charout;
+end function;
 
 begin
 ----------------------------------------------------------
@@ -338,7 +358,7 @@ begin
 			sendStr(0 TO (WELCOME_STR'length-1)) <= WELCOME_STR;
 			strEnd <= WELCOME_STR'length;
 		elsif (uartState = LD_BTN_STR) then
-            printout_data <= printout_raw(temperature_data, humidity_data);
+      printout_data <= get_raw(temperature_data, humidity_data);
 			sendStr(0 to (printout_data'length-1)) <= printout_data;
 			strEnd <= printout_data'length;
 		end if;
