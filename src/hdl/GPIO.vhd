@@ -1,6 +1,7 @@
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use ieee.numeric_std.all;
+use ieee.fixed_pkg.all;
 
 --The IEEE.std_logic_unsigned contains definitions that allow 
 --std_logic_vector types to be used with the + operator to instantiate a 
@@ -20,6 +21,22 @@ entity GPIO_demo is
 end GPIO_demo;
 
 architecture Behavioral of GPIO_demo is
+
+component Binary_to_BCD is
+  generic (
+    g_INPUT_WIDTH    : in positive;
+    g_DECIMAL_DIGITS : in positive
+    );
+  port (
+    i_Clock  : in std_logic;
+    i_Start  : in std_logic;
+    i_Binary : in std_logic_vector(g_INPUT_WIDTH-1 downto 0);
+     
+    o_BCD : out std_logic_vector(g_DECIMAL_DIGITS*4-1 downto 0);
+    o_DV  : out std_logic
+    );
+end component Binary_to_BCD;
+
 
 component pmod_hygrometer IS
 GENERIC(
@@ -99,6 +116,11 @@ constant TMR_VAL_MAX : std_logic_vector(3 downto 0) := "1001"; --9
 constant RESET_CNTR_MAX : std_logic_vector(17 downto 0) := "110000110101000000";-- 100,000,000 * 0.002 = 200,000 = clk cycles per 2 ms
 
 constant MAX_STR_LEN : integer := 64;
+constant TEM_INT_LEN : integer := 3;
+constant TEM_FRA_LEN : integer := 2;
+constant HUM_INT_LEN : integer := 2;
+constant HUM_FRA_LEN : integer := 2;
+constant READLEN : integer :=TEM_FRA_LEN+TEM_INT_LEN+TEM_FRA_LEN+TEM_INT_LEN+10;
 
 --Welcome string definition. Note that the values stored at each index
 --are the ASCII values of the indicated character.
@@ -107,8 +129,6 @@ constant WELCOME_STR : CHAR_ARRAY(0 to 23) :=
 -- TEM_HUM sensing now:
 -- string length containing CRLF: 24
 
---constant BTN_STR: CHAR_ARRAY(0 to 9) := 
---(X"20", X"44",X"20", X"44",X"20", X"44", X"54", X"54", x"0a", x"0d");
 signal tmrCntr : std_logic_vector(26 downto 0) := (others => '0');
 
 --This counter keeps track of which number is currently being displayed
@@ -144,7 +164,6 @@ signal btnDeBnc : std_logic_vector(3 downto 0);
 
 signal clk_cntr_reg : std_logic_vector (4 downto 0) := (others=>'0'); 
 
---signal pwm_val_reg : std_logic := '0';
 
 --this counter counts the amount of time paused in the UART reset state
 signal reset_cntr : std_logic_vector (17 downto 0) := (others=>'0');
@@ -154,16 +173,29 @@ SIGNAL temperature_data : STD_LOGIC_VECTOR((TEM_RES-1) DOWNTO 0); --temperature 
 signal i2c_ackerr : std_logic;
 SIGNAL serialclk : std_logic ;
 signal serialdata: std_logic ;
-signal printout_data : CHAR_ARRAY (0 TO (HUM_RES+TEM_RES+3)) := (OTHERS=>X"00");
+signal print_raw : CHAR_ARRAY (0 TO (HUM_RES+TEM_RES+3)) := (OTHERS=>X"00");
+signal print_read : CHAR_ARRAY (1 to READLEN) := (OTHERS=>X"00");
 
--- type CHAR_ARRAY is array (integer range<>) of std_logic_vector(7 downto 0);
+function str_to_chary(src: string) return CHAR_ARRAY is 
+    constant len: integer := src'length;
+    constant str: string(1 to len) := src; 
+    variable char: integer; 
+    variable charary: CHAR_ARRAY(1 to len);
+begin 
+    for i in str'range loop
+        char := character'pos(str(i));
+        -- report "character is " & character'val(char) & "," severity NOTE ;
+        charary(i) := std_logic_vector(to_unsigned(char,8));
+    end loop; 
+    return charary; 
+end function; 
+
 function slv_to_charary ( src : std_logic_vector) return CHAR_ARRAY is
 	constant slv : std_logic_vector := src;
 	variable strdata : CHAR_ARRAY (1 to slv'length) := (others => x"20");
 	variable stridx : natural := 1; 
 		begin
 			for i in slv'range loop
-		--        strdata(stridx) := std_logic'image(slv((i)))(2);
 				if slv(i) = '1' then
 					strdata(stridx) := x"31";
 				else 
@@ -195,54 +227,119 @@ function get_raw (temsrc : std_logic_vector; humsrc : std_logic_vector)
 			charout((TEM_RES+3) to outlen) := add_CRLF(slv_to_charary(humdata)); -- HUM
 		return charout;
 end function;
+
 function readhum (src: std_logic_vector) return CHAR_ARRAY is
 	constant srchum : std_logic_vector := src;
-	constant hundred : std_logic_vector(7 downto 0) := "01100100"; -- 100 in decimal
-	variable humdata : real := 0.0;
-	variable idx : integer := 0;
-	variable stri: integer := 0;
-	-- 4 digit precision RH display, with . and %
+  variable srcfixed : ufixed(-1 downto -16);
+  constant hundredu : ufixed(7 downto 0) := to_ufixed(100, 7, 0);
+	variable humufixed : ufixed(7 downto -16);
+  variable fractionu : ufixed(-1 downto -16);
+  variable intpart : integer;
+  variable fractionpart: integer;
 	variable humstr : string (1 to 5) := "";
-	variable humout : CHAR_ARRAY (1 to 6) := (others=> x"00");
+	variable humout : CHAR_ARRAY (1 to HUM_INT_LEN+HUM_FRA_LEN+2) := (others=> x"00");
 	begin
-	-- 	while idx < HUM_RES loop
-	-- 		humdata := humdata + srcdata(HUM_RES-1-idx)*2**(-idx-1);
-	-- 		idx := idx+1;
-	-- 	end loop;
-	-- 	humstr := real'image(humdata);
-	-- 	idx := 1;
-	-- 	while idx < 4 loop
-	-- 		if idx = 3 THEN
-	-- 			humout(3) := (x"2e"); -- '.'
-	-- 			stri := stri + 1;
-	-- --           humout(stri+idx) := (x "character'val(humstr(idx))");
-	-- 		humout(stri+idx) := humstr(idx);
-	-- 		idx := idx + 1;
-	-- 		end if;
-	-- 	end loop;
-	-- 	humout(6) := (x"25"); -- '%'
-	-- return humout;
+	  -- srcfixed(-1 downto -HUM_RES) := to_ufixed(src, -1, -HUM_RES);
+		humufixed := srcfixed * hundredu;
+		intpart := to_integer(humufixed(7 downto 0));
+		fractionu := humufixed(-1 downto -16);
+		fractionpart := to_integer(fractionu*hundredu);
+
+		humout(1 to HUM_INT_LEN) := str_to_chary(integer'image(intpart));
+		humout(HUM_INT_LEN+1 to HUM_INT_LEN+1) := str_to_chary(".");
+		humout(HUM_INT_LEN+2 to HUM_INT_LEN+HUM_FRA_LEN+1) := str_to_chary(integer'image(fractionpart));
+		humout(HUM_INT_LEN+HUM_FRA_LEN+2 to HUM_INT_LEN+HUM_FRA_LEN+2) := 
+		str_to_chary("%");
+	return humout;
 end function;
 
 function readtem (src: std_logic_vector) return CHAR_ARRAY is
+-- function readtem (src: std_logic_vector) return std_logic_vector is
   constant srctem : std_logic_vector := src;
-	constant factor : std_logic_vector(7 downto 0) := "10100101"; -- 165 in decimal
-	constant subtrahend : std_logic_vector(7 downto 0) := "00101000"; -- 40 in decimal
-	variable tembin : std_logic_vector(31 downto 0);
-	variable charout : CHAR_ARRAY(1 to 2);
-
-  constant srcfixed : ufixed(0 downto -15) := to_ufixed(src, srcfixed);
-  constant factorint : ufixed(7 downto 0) := to_ufixed(165, factorint);
-  constant subint : ufixed(8 downto -15) := to_ufixed(40, subint);
-  variable temfixed : ufixed(8 downto -15);
+  constant hundredu : ufixed(7 downto 0) := to_ufixed(100, 7, 0);
+  constant factorint : ufixed(7 downto 0) := to_ufixed(165, 7, 0);
+  constant subint : ufixed(7 downto -16) := to_ufixed(40, 7, -16);
+	
+  variable srcfixed : ufixed(-1 downto -16);
+	variable tembin : std_logic_vector(8 downto -16);
+  variable fractionu : ufixed(-1 downto -16);
+  variable temfixed : sfixed(9 downto -16);
+	variable strlen : integer;
+  variable intpart : integer;
+  variable fractionpart: integer;
+	variable signchar : CHAR_ARRAY(1 to 1) := (others=>x"00");
+  variable intchary : CHAR_ARRAY(1 to TEM_INT_LEN) := (others=>x"00");
+  variable frachary : CHAR_ARRAY(1 to TEM_FRA_LEN) := (others=>x"00");
+  variable temchary : CHAR_ARRAY(1 to TEM_FRA_LEN+TEM_INT_LEN+4) := (others=>x"00");
+  
 		begin
-      temfixed := srcfixed*factorint-subint;
-      tembin := std_logic_vector(to_unsigned(temfixed, temfixed'length));
+			srcfixed(-1 downto -TEM_RES) := to_ufixed(src, -1, -TEM_RES);
+      temfixed := to_sfixed(srcfixed*factorint) - to_sfixed(subint);
+      
+      if (to_slv(temfixed)'high = 0) then -- positive value
+        intpart := to_integer(temfixed(7 downto 0));
 
-		return charout;
+      elsif (to_slv(temfixed)'high = 1) then -- negative value
+        intpart := to_integer(temfixed(7 downto 0)) - 1;
+				signchar := str_to_chary("-");
+      end if;
+			strlen := integer'image(intpart)'length;
+			intchary(TEM_INT_LEN-strlen+1 to TEM_INT_LEN) := str_to_chary(integer'image(intpart));
+	  	-- intchary := str_to_chary(integer'image(intpart));
+      
+      fractionu := to_ufixed(to_slv(temfixed(-1 downto -16)), fractionu);
+      fractionpart := to_integer( fractionu*hundredu );
+			strlen := integer'image(fractionpart)'length;
+			frachary(TEM_FRA_LEN-strlen+1 to TEM_FRA_LEN) := str_to_chary(integer'image(fractionpart));
+
+			-- temchary(1) := signchar;
+			temchary(1 to 1) := signchar;
+			temchary(2 to TEM_INT_LEN+1) := intchary;
+			temchary(TEM_INT_LEN+2 to TEM_INT_LEN+2) := str_to_chary(".");
+			temchary(TEM_INT_LEN+3 to TEM_FRA_LEN+TEM_INT_LEN+2) := frachary;
+			temchary(TEM_FRA_LEN+TEM_INT_LEN+3 to TEM_FRA_LEN+TEM_INT_LEN+4) :=
+			(x"B0", x"43"); --oC unit
+
+    --   tembin := to_slv(temfixed);
+		-- return tembin;
+		return temchary;
 end function;
 
+function get_read (tem : std_logic_vector; hum : std_logic_vector) 
+return CHAR_ARRAY is
+	variable temchar : CHAR_ARRAY(1 to TEM_FRA_LEN+TEM_INT_LEN+4);
+	variable humchar : CHAR_ARRAY(1 to TEM_FRA_LEN+TEM_INT_LEN+2);
+	constant len : integer := temchar'length+humchar'length;	
+	variable charout : CHAR_ARRAY(1 to len+4);
+	begin
+		temchar := readtem(tem);
+		humchar := readhum(hum);
+
+		charout(1 to tem'length+2) := add_CRLF(temchar);
+		charout(tem'length +3 to len+4) := add_CRLF(humchar);
+	return charout;
+end function;
+
+
 begin
+----------------------------------------------------------------
+------                Character convert                  -------
+----------------------------------------------------------------
+
+--To_BCD: Binary_to_BCD 
+--  generic map(
+--    g_INPUT_WIDTH    => ,
+--    g_DECIMAL_DIGITS =>
+--    )
+--  port map(
+--    i_Clock  => ,
+--    i_Start  => ,
+--    i_Binary => ,
+     
+--    o_BCD => ,
+--    o_DV  => o_DV,
+--    );
+
 ----------------------------------------------------------
 ------                LED Control                  -------
 ----------------------------------------------------------
@@ -358,9 +455,12 @@ begin
 			sendStr(0 TO (WELCOME_STR'length-1)) <= WELCOME_STR;
 			strEnd <= WELCOME_STR'length;
 		elsif (uartState = LD_BTN_STR) then
-      printout_data <= get_raw(temperature_data, humidity_data);
-			sendStr(0 to (printout_data'length-1)) <= printout_data;
-			strEnd <= printout_data'length;
+      -- print_raw <= get_raw(temperature_data, humidity_data);
+			-- sendStr(0 to (print_raw'length-1)) <= print_raw;
+			-- strEnd <= print_raw'length;
+      print_read <= get_read(temperature_data, humidity_data);
+			sendStr(0 to (print_read'length-1)) <= print_read;
+			strEnd <= print_read'length;
 		end if;
 	end if;
 end process;
