@@ -121,6 +121,7 @@ constant TEM_FRA_LEN : integer := 2;
 constant HUM_INT_LEN : integer := 2;
 constant HUM_FRA_LEN : integer := 2;
 constant READLEN : integer :=TEM_FRA_LEN+TEM_INT_LEN+TEM_FRA_LEN+TEM_INT_LEN+10;
+constant TEM_TESTIN : std_logic_vector((TEM_RES-1) downto 0) := "10001011110010";
 
 --Welcome string definition. Note that the values stored at each index
 --are the ASCII values of the indicated character.
@@ -170,11 +171,17 @@ signal reset_cntr : std_logic_vector (17 downto 0) := (others=>'0');
 
 SIGNAL humidity_data    : STD_LOGIC_VECTOR((HUM_RES-1) DOWNTO 0); --humidity data buffer
 SIGNAL temperature_data : STD_LOGIC_VECTOR((TEM_RES-1) DOWNTO 0); --temperature data buffer
+signal temC : std_logic_vector(25 downto 0);
 signal i2c_ackerr : std_logic;
 SIGNAL serialclk : std_logic ;
 signal serialdata: std_logic ;
 signal print_raw : CHAR_ARRAY (0 TO (HUM_RES+TEM_RES+3)) := (OTHERS=>X"00");
 signal print_read : CHAR_ARRAY (1 to READLEN) := (OTHERS=>X"00");
+
+signal bcdstart2, bcdstart3, bcddv2, bcddv3 : std_logic;
+signal bcdin2, bcdin3 : std_logic_vector(7 downto 0);
+signal bcdout2 : std_logic_vector(7 downto 0);
+signal bcdout3 : std_logic_vector(13 downto 0);
 
 function str_to_chary(src: string) return CHAR_ARRAY is 
     constant len: integer := src'length;
@@ -253,13 +260,14 @@ function readhum (src: std_logic_vector) return CHAR_ARRAY is
 	return humout;
 end function;
 
-function readtem (src: std_logic_vector) return CHAR_ARRAY is
--- function readtem (src: std_logic_vector) return std_logic_vector is
+-- function readtem (src: std_logic_vector) return CHAR_ARRAY is
+function readtem (src: std_logic_vector) return std_logic_vector  is
   constant srctem : std_logic_vector := src;
   constant hundredu : ufixed(7 downto 0) := to_ufixed(100, 7, 0);
   constant factorint : ufixed(7 downto 0) := to_ufixed(165, 7, 0);
   constant subint : ufixed(7 downto -16) := to_ufixed(40, 7, -16);
 	
+	variable signflag : std_logic;
   variable srcfixed : ufixed(-1 downto -16);
 	variable tembin : std_logic_vector(8 downto -16);
   variable fractionu : ufixed(-1 downto -16);
@@ -276,69 +284,116 @@ function readtem (src: std_logic_vector) return CHAR_ARRAY is
 			srcfixed(-1 downto -TEM_RES) := to_ufixed(src, -1, -TEM_RES);
       temfixed := to_sfixed(srcfixed*factorint) - to_sfixed(subint);
       
-      if (to_slv(temfixed)'high = 0) then -- positive value
-        intpart := to_integer(temfixed(7 downto 0));
+--      if (to_slv(temfixed)'high = 0) then -- positive value
+--        intpart := to_integer(temfixed(7 downto 0));
 
-      elsif (to_slv(temfixed)'high = 1) then -- negative value
-        intpart := to_integer(temfixed(7 downto 0)) - 1;
-				signchar := str_to_chary("-");
-      end if;
-			strlen := integer'image(intpart)'length;
-			intchary(TEM_INT_LEN-strlen+1 to TEM_INT_LEN) := str_to_chary(integer'image(intpart));
-	  	-- intchary := str_to_chary(integer'image(intpart));
+--      elsif (to_slv(temfixed)'high = 1) then -- negative value
+--        intpart := to_integer(temfixed(7 downto 0)) - 1;
+--				signchar := str_to_chary("-");
+--      end if;
+--			strlen := integer'image(intpart)'length;
+--			intchary(TEM_INT_LEN-strlen+1 to TEM_INT_LEN) := str_to_chary(integer'image(intpart));
+--	  	-- intchary := str_to_chary(integer'image(intpart));
       
-      fractionu := to_ufixed(to_slv(temfixed(-1 downto -16)), fractionu);
-      fractionpart := to_integer( fractionu*hundredu );
-			strlen := integer'image(fractionpart)'length;
-			frachary(TEM_FRA_LEN-strlen+1 to TEM_FRA_LEN) := str_to_chary(integer'image(fractionpart));
+--      fractionu := to_ufixed(to_slv(temfixed(-1 downto -16)), fractionu);
+--      fractionpart := to_integer( fractionu*hundredu );
+--			strlen := integer'image(fractionpart)'length;
+--			frachary(TEM_FRA_LEN-strlen+1 to TEM_FRA_LEN) := str_to_chary(integer'image(fractionpart));
 
-			-- temchary(1) := signchar;
-			temchary(1 to 1) := signchar;
-			temchary(2 to TEM_INT_LEN+1) := intchary;
-			temchary(TEM_INT_LEN+2 to TEM_INT_LEN+2) := str_to_chary(".");
-			temchary(TEM_INT_LEN+3 to TEM_FRA_LEN+TEM_INT_LEN+2) := frachary;
-			temchary(TEM_FRA_LEN+TEM_INT_LEN+3 to TEM_FRA_LEN+TEM_INT_LEN+4) :=
-			(x"B0", x"43"); --oC unit
+--			-- temchary(1) := signchar;
+--			temchary(1 to 1) := signchar;
+--			temchary(2 to TEM_INT_LEN+1) := intchary;
+--			temchary(TEM_INT_LEN+2 to TEM_INT_LEN+2) := str_to_chary(".");
+--			temchary(TEM_INT_LEN+3 to TEM_FRA_LEN+TEM_INT_LEN+2) := frachary;
+--			temchary(TEM_FRA_LEN+TEM_INT_LEN+3 to TEM_FRA_LEN+TEM_INT_LEN+4) :=
+--			(x"B0", x"43"); --oC unit
 
     --   tembin := to_slv(temfixed);
-		-- return tembin;
-		return temchary;
+--		return (signflag, tembin);
+		return tembin;
+		-- return temchary;
 end function;
 
-function get_read (tem : std_logic_vector; hum : std_logic_vector) 
-return CHAR_ARRAY is
-	variable temchar : CHAR_ARRAY(1 to TEM_FRA_LEN+TEM_INT_LEN+4);
-	variable humchar : CHAR_ARRAY(1 to TEM_FRA_LEN+TEM_INT_LEN+2);
-	constant len : integer := temchar'length+humchar'length;	
-	variable charout : CHAR_ARRAY(1 to len+4);
+--function get_read (tem : std_logic_vector; hum : std_logic_vector) 
+--return CHAR_ARRAY is
+--	variable temchar : CHAR_ARRAY(1 to TEM_FRA_LEN+TEM_INT_LEN+4);
+--	variable humchar : CHAR_ARRAY(1 to TEM_FRA_LEN+TEM_INT_LEN+2);
+--	constant len : integer := temchar'length+humchar'length;	
+
+--	variable charout : CHAR_ARRAY(1 to len+4);
+--	begin
+--		temchar := readtem(tem);
+--		humchar := readhum(hum);
+
+--		charout(1 to tem'length+2) := add_CRLF(temchar);
+--		charout(tem'length +3 to len+4) := add_CRLF(humchar);
+--	return charout;
+--end function;
+
+function twos_cplt (src : std_logic_vector) return std_logic_vector is
+	constant len : integer := src'length;
+	constant srcdata : std_logic_vector(len-1 downto 0) := src;
+	variable mediate : std_logic_vector(len-1 downto 0);
+	variable dstdata : std_logic_vector(len-1 downto 0);
 	begin
-		temchar := readtem(tem);
-		humchar := readhum(hum);
-
-		charout(1 to tem'length+2) := add_CRLF(temchar);
-		charout(tem'length +3 to len+4) := add_CRLF(humchar);
-	return charout;
+		mediate := not srcdata;
+		dstdata := std_logic_vector(unsigned(mediate+1));
+	return dstdata;
 end function;
-
-
 begin
 ----------------------------------------------------------------
 ------                Character convert                  -------
 ----------------------------------------------------------------
 
---To_BCD: Binary_to_BCD 
---  generic map(
---    g_INPUT_WIDTH    => ,
---    g_DECIMAL_DIGITS =>
---    )
---  port map(
---    i_Clock  => ,
---    i_Start  => ,
---    i_Binary => ,
+Inst_Hygrometer: pmod_hygrometer
+GENERIC map(
+    sys_clk_freq            => 100_000_000,        --input clock speed from user logic in Hz
+    humidity_resolution     => HUM_RES ,  --RH resolution in bits (must be 14, 11, or 8)
+    temperature_resolution  => TEM_RES ) --temperature resolution in bits (must be 14 or 11)
+PORT map(
+    clk               => CLK,                                            --system clock
+    reset_n           => SW(0),                                          --asynchronous active-low reset
+    scl               => ja(3) ,                                            --I2C serial clock
+    sda               => ja(4) ,                                            --I2C serial data
+    i2c_ack_err       => i2c_ackerr,                                            --I2C slave acknowledge error flag
+    relative_humidity => humidity_data((HUM_RES-1)  DOWNTO 0),     --relative humidity data obtained
+    temperature       => temperature_data((TEM_RES-1) downto 0)); --temperature data obtained
+
+To_BCD_3_digit: Binary_to_BCD 
+ generic map(
+   g_INPUT_WIDTH    => 8,
+   g_DECIMAL_DIGITS => 3
+   )
+ port map(
+   i_Clock  => clk,
+   i_Start  => bcdstart3,
+   i_Binary => bcdin3,
      
---    o_BCD => ,
---    o_DV  => o_DV,
---    );
+   o_BCD => bcdout3,
+   o_DV  => bcddv3
+   );
+
+To_BCD_2_digit: Binary_to_BCD 
+ generic map(
+   g_INPUT_WIDTH    => 8,
+   g_DECIMAL_DIGITS => 2
+   )
+ port map(
+   i_Clock  => clk,
+   i_Start  => bcdstart2,
+   i_Binary => bcdin2,
+     
+   o_BCD => bcdout2,
+   o_DV  => bcddv2
+   );
+
+temint : process
+begin
+--	bcdin2 := "11001001";
+	-- temC <= readtem(temperature_data);
+	temC <= readtem(TEM_TESTIN);
+
+end process;
 
 ----------------------------------------------------------
 ------                LED Control                  -------
@@ -455,12 +510,12 @@ begin
 			sendStr(0 TO (WELCOME_STR'length-1)) <= WELCOME_STR;
 			strEnd <= WELCOME_STR'length;
 		elsif (uartState = LD_BTN_STR) then
-      -- print_raw <= get_raw(temperature_data, humidity_data);
-			-- sendStr(0 to (print_raw'length-1)) <= print_raw;
-			-- strEnd <= print_raw'length;
-      print_read <= get_read(temperature_data, humidity_data);
-			sendStr(0 to (print_read'length-1)) <= print_read;
-			strEnd <= print_read'length;
+      print_raw <= get_raw(temperature_data, humidity_data);
+			sendStr(0 to (print_raw'length-1)) <= print_raw;
+			strEnd <= print_raw'length;
+      -- print_read <= get_read(temperature_data, humidity_data);
+			-- sendStr(0 to (print_read'length-1)) <= print_read;
+			-- strEnd <= print_read'length;
 		end if;
 	end if;
 end process;
@@ -503,18 +558,5 @@ Inst_UART_TX_CTRL: UART_TX_CTRL port map(
 UART_TXD <= uartTX;
 
 ------------------------------------
-Inst_Hygrometer: pmod_hygrometer
-GENERIC map(
-    sys_clk_freq            => 100_000_000,        --input clock speed from user logic in Hz
-    humidity_resolution     => HUM_RES ,  --RH resolution in bits (must be 14, 11, or 8)
-    temperature_resolution  => TEM_RES ) --temperature resolution in bits (must be 14 or 11)
-PORT map(
-    clk               => CLK,                                            --system clock
-    reset_n           => SW(0),                                          --asynchronous active-low reset
-    scl               => ja(3) ,                                            --I2C serial clock
-    sda               => ja(4) ,                                            --I2C serial data
-    i2c_ack_err       => i2c_ackerr,                                            --I2C slave acknowledge error flag
-    relative_humidity => humidity_data((HUM_RES-1)  DOWNTO 0),     --relative humidity data obtained
-    temperature       => temperature_data((TEM_RES-1) downto 0)); --temperature data obtained
 
 end Behavioral;
